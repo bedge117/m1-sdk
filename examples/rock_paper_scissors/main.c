@@ -126,12 +126,12 @@ int32_t app_main(void *context)
             if (btn == M1APP_BTN_LEFT)
             {
                 selection = (selection == PICK_ROCK) ? PICK_SCISSORS : (choice_t)(selection - 1);
-                m1_buzzer_notification(M1APP_BUZZER_CLICK);
+                m1_buzzer_notification();
             }
             else if (btn == M1APP_BTN_RIGHT)
             {
                 selection = (selection == PICK_SCISSORS) ? PICK_ROCK : (choice_t)(selection + 1);
-                m1_buzzer_notification(M1APP_BUZZER_CLICK);
+                m1_buzzer_notification();
             }
             else if (btn == M1APP_BTN_OK)
             {
@@ -139,7 +139,7 @@ int32_t app_main(void *context)
                 cpu_choice = (choice_t)game_rand_range(0, 2);
                 state = STATE_REVEAL;
                 reveal_timer = 0;
-                m1_buzzer_notification(M1APP_BUZZER_CLICK);
+                m1_buzzer_notification();
             }
             break;
 
@@ -153,11 +153,11 @@ int32_t app_main(void *context)
                 else draws++;
 
                 if (outcome == 1)
-                    m1_buzzer_notification(M1APP_BUZZER_SUCCESS);
+                    m1_buzzer_notification();
                 else if (outcome == 2)
-                    m1_buzzer_notification(M1APP_BUZZER_ERROR);
+                    m1_buzzer_notification2();
                 else
-                    m1_buzzer_notification(M1APP_BUZZER_CLICK);
+                    m1_buzzer_notification();
 
                 state = STATE_RESULT;
             }

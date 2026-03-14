@@ -100,7 +100,7 @@ int32_t app_main(void *context)
         {
             animating = 1;
             anim_frame = 0;
-            m1_buzzer_notification(M1APP_BUZZER_CLICK);
+            m1_buzzer_notification();
         }
 
         if (animating)
@@ -114,7 +114,7 @@ int32_t app_main(void *context)
                 total_flips++;
                 if (result == 0)
                     heads_count++;
-                m1_buzzer_notification(M1APP_BUZZER_SUCCESS);
+                m1_buzzer_notification();
             }
         }
 

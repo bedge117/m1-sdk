@@ -51,7 +51,7 @@ static void update(m1app_button_t btn)
         ball_dx < 0)
     {
         ball_dx = -ball_dx;
-        m1_buzzer_notification(M1APP_BUZZER_CLICK);
+        m1_buzzer_notification();
     }
 
     /* Reset if ball goes past paddle */

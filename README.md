@@ -112,9 +112,9 @@ m1app_free(p);                   // free
 ### Audio
 
 ```c
-m1_buzzer_notification(M1APP_BUZZER_CLICK);    // short click
-m1_buzzer_notification(M1APP_BUZZER_SUCCESS);  // success tone
-m1_buzzer_notification(M1APP_BUZZER_ERROR);    // error tone
+m1_buzzer_notification();                       // standard beep
+m1_buzzer_notification2();                      // alternate beep (error)
+m1_buzzer_set(2000, 100);                       // custom tone: freq Hz, duration ms
 ```
 
 ### File I/O

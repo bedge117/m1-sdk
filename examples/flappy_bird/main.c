@@ -102,7 +102,7 @@ static void update(int flap)
         {
             pipes[i].scored = 1;
             score++;
-            m1_buzzer_notification(M1APP_BUZZER_CLICK);
+            m1_buzzer_notification();
         }
 
         /* Recycle pipe */
@@ -232,7 +232,7 @@ int32_t app_main(void *context)
             {
                 game_started = 1;
                 reset_game();
-                m1_buzzer_notification(M1APP_BUZZER_CLICK);
+                m1_buzzer_notification();
             }
 
             m1app_display_begin();
@@ -270,7 +270,7 @@ int32_t app_main(void *context)
             {
                 if (score > best_score)
                     best_score = score;
-                m1_buzzer_notification(M1APP_BUZZER_ERROR);
+                m1_buzzer_notification2();
             }
         }
         else
@@ -279,7 +279,7 @@ int32_t app_main(void *context)
             if (btn == M1APP_BTN_OK)
             {
                 reset_game();
-                m1_buzzer_notification(M1APP_BUZZER_CLICK);
+                m1_buzzer_notification();
             }
         }
 
