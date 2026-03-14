@@ -546,6 +546,11 @@ extern int m1_field_detect_rfid_raw(void);
  * Returns -1 if not initialized. */
 extern int m1_field_detect_nfc_raw(void);
 
+/* Debug: returns ST25R3916 OP_CONTROL register value.
+ * Bit 7 (0x80) = oscillator ON. Bits 1:0 = EFD mode (0x02 = manual PDT).
+ * Expected value when working: 0x82 (osc ON + manual EFD). */
+extern int m1_field_detect_nfc_opctl(void);
+
 
 /* ==================================================================
  *  Crypto (AES-256-CBC)

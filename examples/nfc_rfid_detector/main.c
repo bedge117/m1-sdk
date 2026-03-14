@@ -51,6 +51,7 @@ static uint32_t rfid_freq_hz;
 static int init_result;
 static int nfc_raw;       /* last nfc detect result */
 static int nfc_aux;       /* last AUX_DISPLAY register value */
+static int nfc_opctl;     /* last OP_CONTROL register value */
 static int rfid_raw;      /* last raw transition count */
 static int rfid_detect;   /* last rfid detect result */
 
@@ -125,18 +126,18 @@ static void draw_screen(u8g2_t *u8g2)
         /* No field — show diagnostic info */
         u8g2_SetFont(u8g2, u8g2_font_5x8_tr);
 
-        /* Init status + AUX register */
-        snprintf(buf, sizeof(buf), "NFC:%s AUX:0x%02X",
-                 init_result == 0 ? "OK" : "FAIL", (unsigned)nfc_aux);
+        /* Init status + OP_CONTROL register */
+        snprintf(buf, sizeof(buf), "NFC:%s OP:0x%02X",
+                 init_result == 0 ? "OK" : "FAIL", (unsigned)nfc_opctl);
         u8g2_DrawStr(u8g2, 2, 24, buf);
 
-        /* NFC efd_o and osc_ok bits */
-        snprintf(buf, sizeof(buf), "efd_o:%d osc_ok:%d det:%d",
-                 (nfc_aux >> 6) & 1, (nfc_aux >> 4) & 1, nfc_raw);
+        /* NFC AUX_DISPLAY: efd_o and osc_ok bits */
+        snprintf(buf, sizeof(buf), "AUX:0x%02X efd:%d osc:%d",
+                 (unsigned)nfc_aux, (nfc_aux >> 6) & 1, (nfc_aux >> 4) & 1);
         u8g2_DrawStr(u8g2, 2, 34, buf);
 
         /* RFID ADC delta from baseline */
-        snprintf(buf, sizeof(buf), "RFID ADC delta: %d", rfid_raw);
+        snprintf(buf, sizeof(buf), "RFID delta:%d det:%d", rfid_raw, rfid_detect);
         u8g2_DrawStr(u8g2, 2, 44, buf);
 
         /* Instructions */
@@ -158,6 +159,7 @@ int32_t app_main(void *context)
     rfid_freq_hz = 0;
     nfc_raw = 0;
     nfc_aux = 0;
+    nfc_opctl = 0;
     rfid_raw = 0;
     rfid_detect = 0;
 
@@ -171,8 +173,9 @@ int32_t app_main(void *context)
     {
         /* --- Detect fields --- */
         uint32_t freq = 0;
-        nfc_raw = m1_field_detect_nfc();     /* must call first — caches AUX reg */
-        nfc_aux = m1_field_detect_nfc_raw(); /* returns cached value from above */
+        nfc_raw = m1_field_detect_nfc();       /* must call first — caches regs */
+        nfc_aux = m1_field_detect_nfc_raw();   /* cached AUX_DISPLAY */
+        nfc_opctl = m1_field_detect_nfc_opctl(); /* cached OP_CONTROL */
         rfid_detect = m1_field_detect_rfid(&freq);
         rfid_raw = m1_field_detect_rfid_raw();
 
