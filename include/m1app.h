@@ -18,6 +18,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -606,6 +607,60 @@ extern long   strtol(const char *nptr, char **endptr, int base);
 extern int    rand(void);
 extern void   srand(unsigned int seed);
 extern int    abs(int j);
+
+
+/* ==================================================================
+ *  ESP32-C6 wireless card — WiFi / BLE / ESP-NOW
+ * ==================================================================
+ * Programmatic access to the M1's wireless coprocessor for custom apps.
+ * All calls block on the SPI RPC round-trip; most return bool (true=ok).
+ */
+
+/* Health / version */
+extern bool m1_esp_client_ping(void);
+extern bool m1_esp_client_fw_version(char *out, uint16_t cap);
+
+/* --- WiFi station --- */
+/* Scan APs: fills buf with [count:2 LE] then per-AP records; returns length (<0 err). */
+extern int  m1_esp_client_wifi_scan(uint8_t *buf, uint16_t buf_size);
+/* Join an AP; on success writes the 4-byte IP into ip_out. */
+extern bool m1_esp_client_wifi_connect(const char *ssid, const char *pwd, uint8_t ip_out[4]);
+extern bool m1_esp_client_wifi_disconnect(void);
+extern bool m1_esp_client_wifi_status(uint8_t *connected, uint8_t ip_out[4]);
+
+/* --- BLE --- */
+/* Scan for duration_sec; fills buf with advertisement records; returns length. */
+extern int  m1_esp_client_ble_scan(uint8_t *buf, uint16_t buf_size, uint8_t duration_sec);
+extern bool m1_esp_client_ble_advertise(const char *name);
+extern bool m1_esp_client_ble_connect(const char *addr_str, uint8_t addr_type);
+/* BLE HID keyboard (BadBT): advertise as `name`, send keypresses, tear down. */
+extern bool m1_esp_client_ble_hid_init(const char *name);
+extern bool m1_esp_client_ble_hid_deinit(void);
+extern bool m1_esp_client_ble_hid_key(uint8_t modifier, uint8_t keycode);
+extern bool m1_esp_client_ble_hid_status(uint8_t *connected);
+
+/* --- Offensive WiFi (ESP runs these autonomously once started) --- */
+extern bool m1_esp_client_deauth_start(const uint8_t bssid[6], uint8_t channel,
+                                       const uint8_t station[6], uint16_t count,
+                                       uint16_t interval_ms);
+extern bool m1_esp_client_deauth_stop(void);
+extern int  m1_esp_client_sta_scan(const uint8_t bssid[6], uint8_t channel, uint8_t duration_sec,
+                                   uint8_t *buf, uint16_t buf_size);
+extern bool m1_esp_client_hs_start(const uint8_t bssid[6], uint8_t channel, uint16_t deauth_count);
+extern bool m1_esp_client_hs_status(uint8_t *state, uint32_t *total_len);
+extern int  m1_esp_client_hs_read(uint32_t offset, uint8_t *buf, uint16_t want);
+extern bool m1_esp_client_hs_stop(void);
+extern bool m1_esp_client_beacon_start(const char ssids[][33], uint8_t count);
+extern bool m1_esp_client_beacon_stop(void);
+
+/* --- ESP-NOW peer link (M1<->M1, no AP) --- */
+typedef struct { uint8_t mac[6]; int8_t rssi; char name[24]; } m1app_now_peer_t;
+extern bool m1_esp_client_now_start(uint8_t channel, const char *name, uint8_t mac_out[6]);
+extern bool m1_esp_client_now_stop(void);
+extern bool m1_esp_client_now_announce(void);
+extern int  m1_esp_client_now_get_peers(m1app_now_peer_t *out, int max);
+extern bool m1_esp_client_now_send(const uint8_t mac[6], const uint8_t *data, uint16_t len);
+extern int  m1_esp_client_now_recv(uint8_t *buf, uint16_t cap);
 
 
 /* ==================================================================
