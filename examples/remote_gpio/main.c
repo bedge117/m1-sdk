@@ -1,20 +1,25 @@
 /*
- * Remote GPIO — drive one M1's header output pins from another, over ESP-NOW.
+ * Remote GPIO — drive AND monitor one M1's header pins from another, over ESP-NOW.
  *
  * Open the app on two M1s. One picks Controller, the other Receiver, and they
- * pair over the peer link. Toggling a pin on the Controller drives that
- * physical header pin high/low on the Receiver — wire an LED or relay to a
- * header pin and switch it from across the room.
+ * pair over the peer link. On the Controller, each of the 12 user header pins
+ * can be cycled OFF -> ON -> INPUT with OK:
+ *   - OFF / ON  : the pin is a physical OUTPUT on the Receiver (drive an LED,
+ *                 relay, etc.) — square icon, filled when ON.
+ *   - INPUT     : the pin is a physical INPUT on the Receiver; the Receiver
+ *                 reads its level and reports it back live — circle icon,
+ *                 filled when the Receiver reads HIGH.
  *
  * Pins are the 12 user header signal pins (PE2, PE4, PE5, PE6, PD12, PD13,
- * PA14, PA13, PC2, PC3, PD0, PD1). The Receiver configures them as outputs on
- * link and parks them safe (and restores SWD) on exit.
+ * PA14, PA13, PC2, PC3, PD0, PD1). The Receiver parks them safe (and restores
+ * SWD) on exit.
  *
  * Protocol (mirrors the Connect Four peer app):
- *   msgs = ['R'][subtype][body]; filtered by magic + opponent MAC.
- *   RG_STATE body = [seq:1][mask:2 LE] — the full 12-bit pin bitmap. The
- *   Controller resends on every change (3x) and as a ~700ms heartbeat, so a
- *   dropped frame self-heals. Receiver applies newest seq (wrap-safe).
+ *   msgs = ['R'][subtype][body]; filtered by magic + peer MAC.
+ *   RG_STATE  (ctrl->recv) = [seq:1][dir:2 LE][out:2 LE]   full pin config
+ *   RG_INPUT  (recv->ctrl) = [levels:2 LE]                 live pin read-back
+ *   Controller resends RG_STATE on every change (3x) and as a ~700ms heartbeat;
+ *   Receiver streams RG_INPUT ~5x/sec. Newest seq wins (wrap-safe).
  */
 
 #include "m1app.h"
@@ -24,10 +29,11 @@ M1_APP_MANIFEST("Remote GPIO", 1024);
 #define RG_CHANNEL   1
 #define RG_MAX_PEERS 8
 #define RG_MAGIC     'R'
-enum { RG_LINK = 1, RG_ACK = 2, RG_STATE = 3, RG_QUIT = 4 };
+enum { RG_LINK = 1, RG_ACK = 2, RG_STATE = 3, RG_QUIT = 4, RG_INPUT = 5 };
 
-#define GRID_ROWS 6            /* 2 columns x 6 rows = up to 12 pins */
-#define HEARTBEAT_MS 700
+#define GRID_ROWS      6       /* 2 columns x 6 rows = up to 12 pins */
+#define HEARTBEAT_MS   700
+#define INPUT_TX_MS    200
 
 /* buffered ESP-NOW RX (single task -> file-scope cursor is safe) */
 static uint8_t s_buf[1024];
@@ -58,10 +64,18 @@ static int rg_next(uint8_t from[6], uint8_t *sub, const uint8_t **body, int *ble
     }
 }
 
-static void rg_send_state(const uint8_t *mac, uint8_t seq, uint16_t mask)
+static void rg_send_state(const uint8_t *mac, uint8_t seq, uint16_t dir, uint16_t out)
 {
-    uint8_t m[5] = { RG_MAGIC, RG_STATE, seq, (uint8_t)(mask & 0xFF), (uint8_t)(mask >> 8) };
+    uint8_t m[7] = { RG_MAGIC, RG_STATE, seq,
+                     (uint8_t)(dir & 0xFF), (uint8_t)(dir >> 8),
+                     (uint8_t)(out & 0xFF), (uint8_t)(out >> 8) };
     for (int i = 0; i < 3; i++) { m1_esp_client_now_send(mac, m, sizeof(m)); m1app_delay(8); }
+}
+
+static void rg_send_input(const uint8_t *mac, uint16_t levels)
+{
+    uint8_t m[4] = { RG_MAGIC, RG_INPUT, (uint8_t)(levels & 0xFF), (uint8_t)(levels >> 8) };
+    m1_esp_client_now_send(mac, m, sizeof(m));
 }
 
 static void rg_send_simple(const uint8_t *mac, uint8_t sub)
@@ -79,9 +93,11 @@ static const char *rg_pin_name(uint8_t id)
 }
 
 /* ------------------------------------------------------------------ */
-/* Draw the pin grid. cursor<0 hides the selection box (Receiver view). */
-static void rg_draw(u8g2_t *u8g2, uint8_t count, uint16_t mask, int cursor,
-                    const char *status)
+/* dir bit = 1 -> pin is an INPUT (circle icon, `levels` shows read-back);
+ * dir bit = 0 -> pin is an OUTPUT (square icon, `out` shows drive level).
+ * cursor < 0 hides the selection box (Receiver view).                       */
+static void rg_draw(u8g2_t *u8g2, uint8_t count, uint16_t dir, uint16_t out,
+                    uint16_t levels, int cursor, const char *status)
 {
     m1app_display_begin();
     do {
@@ -91,19 +107,25 @@ static void rg_draw(u8g2_t *u8g2, uint8_t count, uint16_t mask, int cursor,
         u8g2_DrawHLine(u8g2, 0, 10, 128);
 
         for (uint8_t id = 0; id < count; id++) {
-            int col = id / GRID_ROWS;              /* 0 = left, 1 = right */
+            int col = id / GRID_ROWS;
             int row = id % GRID_ROWS;
             int x = col ? 66 : 2;
-            int y = 20 + row * 7;                  /* baseline */
-            int on = (mask >> id) & 1;
+            int y = 20 + row * 7;
+            int is_in = (dir >> id) & 1;
+            int cx = x + 3, cy = y - 3;         /* icon centre */
 
-            if (cursor == (int)id) {               /* highlight selected pin */
+            if (cursor == (int)id) {
                 u8g2_DrawBox(u8g2, x - 1, y - 7, 62, 8);
                 u8g2_SetDrawColor(u8g2, 0);
             }
-            /* state indicator: filled = ON */
-            u8g2_DrawFrame(u8g2, x, y - 6, 6, 6);
-            if (on) u8g2_DrawBox(u8g2, x + 1, y - 5, 4, 4);
+
+            if (is_in) {                        /* INPUT: circle, filled if read HIGH */
+                if ((levels >> id) & 1) u8g2_DrawDisc(u8g2, cx, cy, 3, U8G2_DRAW_ALL);
+                else                    u8g2_DrawCircle(u8g2, cx, cy, 3, U8G2_DRAW_ALL);
+            } else {                            /* OUTPUT: square, filled if driven HIGH */
+                u8g2_DrawFrame(u8g2, x, y - 6, 6, 6);
+                if ((out >> id) & 1) u8g2_DrawBox(u8g2, x + 1, y - 5, 4, 4);
+            }
             u8g2_DrawStr(u8g2, x + 10, y, rg_pin_name(id));
             u8g2_SetDrawColor(u8g2, 1);
         }
@@ -115,7 +137,7 @@ static int rg_mode_select(void)
 {
     u8g2_t *u8g2 = m1app_get_u8g2();
     static const char *opt[2] = { "Controller",     "Receiver"        };
-    static const char *sub[2] = { "sends pin state", "drives its pins" };
+    static const char *sub[2] = { "drive + monitor", "runs the pins"   };
     int sel = 0;
     for (;;) {
         m1app_display_begin();
@@ -215,11 +237,7 @@ static int rg_wait_controller(const uint8_t my_mac[6], uint8_t mac[6])
 
         uint8_t fm[6], sb; const uint8_t *bd; int bl;
         while (rg_next(fm, &sb, &bd, &bl)) {
-            if (sb == RG_LINK) {
-                memcpy(mac, fm, 6);
-                rg_send_simple(mac, RG_ACK);
-                return 1;
-            }
+            if (sb == RG_LINK) { memcpy(mac, fm, 6); rg_send_simple(mac, RG_ACK); return 1; }
         }
         m1app_display_begin();
         do {
@@ -230,7 +248,6 @@ static int rg_wait_controller(const uint8_t my_mac[6], uint8_t mac[6])
             u8g2_DrawStr(u8g2, 2, 38, "Waiting for a controller");
             u8g2_DrawStr(u8g2, 2, 50, "to link...   Back:cancel");
         } while (m1app_display_flush());
-
         if (game_poll_button(120) == M1APP_BTN_BACK) return 0;
     }
 }
@@ -239,13 +256,13 @@ static int rg_wait_controller(const uint8_t my_mac[6], uint8_t mac[6])
 static void rg_controller(const uint8_t *mac)
 {
     u8g2_t *u8g2 = m1app_get_u8g2();
-    uint8_t count  = m1_gpio_ext_app_count();
-    uint16_t mask  = 0;
-    uint8_t  seq   = 0;
+    uint8_t  count = m1_gpio_ext_app_count();
+    uint16_t dir = 0, out = 0, levels = 0;
+    uint8_t  seq = 0;
     int      cursor = 0;
-    uint32_t beat  = 0;
+    uint32_t beat = 0;
 
-    rg_send_state(mac, seq, mask);   /* push initial (all-off) state */
+    rg_send_state(mac, seq, dir, out);      /* push initial (all outputs, off) */
 
     for (;;) {
         uint8_t from[6], sub; const uint8_t *body; int blen;
@@ -255,12 +272,14 @@ static void rg_controller(const uint8_t *mac)
                 m1_message_box(u8g2, "Remote GPIO", "Receiver", "left", " OK ");
                 return;
             }
+            if (sub == RG_INPUT && blen >= 2)
+                levels = (uint16_t)body[0] | ((uint16_t)body[1] << 8);
         }
 
         uint32_t now = m1app_get_tick();
-        if (now - beat >= HEARTBEAT_MS) { beat = now; rg_send_state(mac, seq, mask); }
+        if (now - beat >= HEARTBEAT_MS) { beat = now; rg_send_state(mac, seq, dir, out); }
 
-        rg_draw(u8g2, count, mask, cursor, "Controller  OK=toggle");
+        rg_draw(u8g2, count, dir, out, levels, cursor, "Ctrl  OK:off/on/in");
 
         m1app_button_t b = game_poll_button(60);
         if (b == M1APP_BTN_NONE) continue;
@@ -272,28 +291,36 @@ static void rg_controller(const uint8_t *mac)
         else if (b == M1APP_BTN_LEFT || b == M1APP_BTN_RIGHT) col ^= 1;
         else if (b == M1APP_BTN_OK) {
             if (cursor < count) {
-                mask ^= (uint16_t)(1u << cursor);
+                uint16_t bit = (uint16_t)(1u << cursor);
+                int d = (dir >> cursor) & 1, o = (out >> cursor) & 1;
+                if      (!d && !o) { out |= bit; }               /* off -> on */
+                else if (!d &&  o) { dir |= bit; out &= ~bit; }  /* on -> input */
+                else               { dir &= ~bit; out &= ~bit; } /* input -> off */
                 seq++;
-                rg_send_state(mac, seq, mask);
+                rg_send_state(mac, seq, dir, out);
                 m1_buzzer_notification();
             }
         }
         int ni = col * GRID_ROWS + row;
-        if (ni < count) cursor = ni;                 /* skip empty grid slots */
-        else if (col) cursor = row;                  /* right col empty -> left */
+        if (ni < count) cursor = ni;
+        else if (col)   cursor = row;
     }
 }
 
 static void rg_receiver(const uint8_t *mac)
 {
     u8g2_t *u8g2 = m1app_get_u8g2();
-    uint8_t count = m1_gpio_ext_app_count();
-    uint16_t applied = 0;
+    uint8_t  count = m1_gpio_ext_app_count();
+    uint16_t a_dir = 0xFFFF, a_out = 0xFFFF;   /* force first apply */
+    uint16_t cur_dir = 0, cur_out = 0, levels = 0;
     uint8_t  last_seq = 0;
     int      have = 0;
+    uint32_t tx = 0;
 
+    /* start with everything an output, low */
     for (uint8_t i = 0; i < count; i++)
         m1_gpio_ext_app_mode(i, M1APP_GPIO_MODE_OUTPUT);
+    a_dir = 0; a_out = 0;
 
     for (;;) {
         uint8_t from[6], sub; const uint8_t *body; int blen;
@@ -304,18 +331,39 @@ static void rg_receiver(const uint8_t *mac)
                 m1_message_box(u8g2, "Remote GPIO", "Controller", "left", " OK ");
                 return;
             }
-            if (sub == RG_STATE && blen >= 3) {
+            if (sub == RG_STATE && blen >= 5) {
                 uint8_t seq = body[0];
-                uint16_t mask = (uint16_t)body[1] | ((uint16_t)body[2] << 8);
-                if (!have || (int8_t)(seq - last_seq) >= 0) {   /* newest wins (wrap-safe) */
-                    for (uint8_t i = 0; i < count; i++)
-                        m1_gpio_ext_app_write(i, (mask >> i) & 1);
-                    applied = mask; last_seq = seq; have = 1;
+                if (!have || (int8_t)(seq - last_seq) >= 0) {
+                    cur_dir = (uint16_t)body[1] | ((uint16_t)body[2] << 8);
+                    cur_out = (uint16_t)body[3] | ((uint16_t)body[4] << 8);
+                    last_seq = seq; have = 1;
                 }
             }
         }
 
-        rg_draw(u8g2, count, applied, -1, "Receiver  driving pins");
+        /* apply only when the config actually changed */
+        if (cur_dir != a_dir || cur_out != a_out) {
+            for (uint8_t i = 0; i < count; i++) {
+                uint16_t bit = (uint16_t)(1u << i);
+                if (cur_dir & bit) {
+                    if (!(a_dir & bit)) m1_gpio_ext_app_mode(i, M1APP_GPIO_MODE_INPUT);
+                } else {
+                    if (a_dir & bit)    m1_gpio_ext_app_mode(i, M1APP_GPIO_MODE_OUTPUT);
+                    m1_gpio_ext_app_write(i, (cur_out & bit) ? 1 : 0);
+                }
+            }
+            a_dir = cur_dir; a_out = cur_out;
+        }
+
+        /* read every pin and stream levels back to the controller */
+        levels = 0;
+        for (uint8_t i = 0; i < count; i++)
+            if (m1_gpio_ext_app_read(i)) levels |= (uint16_t)(1u << i);
+
+        uint32_t now = m1app_get_tick();
+        if (now - tx >= INPUT_TX_MS) { tx = now; rg_send_input(mac, levels); }
+
+        rg_draw(u8g2, count, a_dir, a_out, levels, -1, "Receiver  live");
 
         if (game_poll_button(60) == M1APP_BTN_BACK) {
             m1_gpio_ext_app_release();
@@ -347,11 +395,8 @@ int32_t app_main(void *context)
         if (mode < 0) break;
 
         uint8_t mac[6];
-        if (mode == 0) {                 /* Controller */
-            if (rg_pick_peer(my_mac, mac)) rg_controller(mac);
-        } else {                         /* Receiver */
-            if (rg_wait_controller(my_mac, mac)) rg_receiver(mac);
-        }
+        if (mode == 0) { if (rg_pick_peer(my_mac, mac))       rg_controller(mac); }
+        else           { if (rg_wait_controller(my_mac, mac)) rg_receiver(mac);   }
     }
 
     m1_esp_client_now_stop();
