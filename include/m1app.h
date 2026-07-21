@@ -269,6 +269,19 @@ extern void HAL_GPIO_TogglePin(M1_GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin);
 #define M1APP_GPIO_PIN_SET    1
 #define M1APP_GPIO_PIN_RESET  0
 
+/* App-friendly external-header GPIO (recommended over raw HAL_GPIO_*).
+ * Pins are 0-based over the user signal pins only — the power-rail control
+ * pins are hidden. app_id 0..count-1; the SWD debug pins are restored on
+ * release(). mode: 0 = input, 1 = push-pull output (driven low on entry). */
+#define M1APP_GPIO_MODE_INPUT   0
+#define M1APP_GPIO_MODE_OUTPUT  1
+extern uint8_t     m1_gpio_ext_app_count(void);            /* number of header pins (12) */
+extern const char *m1_gpio_ext_app_name(uint8_t app_id);  /* e.g. "Pin PE2" */
+extern void        m1_gpio_ext_app_mode(uint8_t app_id, uint8_t mode);
+extern void        m1_gpio_ext_app_write(uint8_t app_id, uint8_t on);
+extern uint8_t     m1_gpio_ext_app_read(uint8_t app_id);
+extern void        m1_gpio_ext_app_release(void);          /* park pins safe, restore SWD */
+
 
 /* ==================================================================
  *  I2C
