@@ -282,6 +282,15 @@ extern void        m1_gpio_ext_app_write(uint8_t app_id, uint8_t on);
 extern uint8_t     m1_gpio_ext_app_read(uint8_t app_id);
 extern void        m1_gpio_ext_app_release(void);          /* park pins safe, restore SWD */
 
+/* Generic 1-Wire bit-bang primitive (microsecond-timed + IRQ-masked, in firmware).
+ * Configure one header pin (0-based id) as an open-drain 1-Wire line; an external
+ * 4.7k pull-up to +3.3V is required. Build device logic (DS18B20, iButton) on top. */
+extern void        m1_ow_init(uint8_t app_id);
+extern int         m1_ow_reset(void);          /* 1 = a device responded */
+extern void        m1_ow_write_byte(uint8_t v);
+extern uint8_t     m1_ow_read_byte(void);
+extern void        m1_ow_deinit(void);
+
 
 /* ==================================================================
  *  I2C

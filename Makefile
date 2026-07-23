@@ -28,7 +28,11 @@ INC_DIR   = $(SDK_DIR)include
 LINK_DIR  = $(SDK_DIR)linker
 
 # ---- Source files ----
-SRCS     = $(wildcard $(APP)/*.c)
+# Compile the app's top-level .c files AND one level of subdirectories (e.g.
+# lib/) so multi-file apps that vendor a library (TamaLIB, etc.) actually link.
+# Previously only $(APP)/*.c was globbed, so anything under $(APP)/lib/ was
+# silently dropped and the app failed to link (undefined references).
+SRCS     = $(wildcard $(APP)/*.c) $(wildcard $(APP)/*/*.c)
 OBJS     = $(SRCS:.c=.o)
 
 # ---- Compiler flags ----
